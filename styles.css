@@ -174,7 +174,7 @@ textarea.field { resize: vertical; min-height: 64px; }
 .splash h1 { font-family: var(--display); font-size: clamp(30px, 7vw, 46px); margin: 6px 0; }
 
 /* ---------- Admin ---------- */
-.admin { --bg: #0f1115; --card: #171a21; --text: #e9ecf2; --muted: #8b93a7; --primary: #F7ADB6; --secondary: #6FB3E8; --accent: #F7ADB6; --onPrimary: #0F3D2C; min-height: 100vh; }
+.admin { --bg: #0f1115; --card: #171a21; --text: #ffffff; --muted: #e3e7f0; color: #ffffff; --primary: #F7ADB6; --secondary: #6FB3E8; --accent: #F7ADB6; --onPrimary: #0F3D2C; min-height: 100vh; }
 .admin-top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.07); position: sticky; top: 0; z-index: 30; background: rgba(15,17,21,.92); backdrop-filter: blur(8px); flex-wrap: wrap; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 12px 16px; scrollbar-width: none; }
 .tabs button { flex: none; padding: 9px 14px; border-radius: 12px; font-weight: 600; font-size: 14px; color: var(--muted); }
@@ -229,3 +229,11 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; fo
 .call-banner button { background: #fff; color: #c62828; font-weight: 800; padding: 8px 14px; border-radius: 12px; }
 .call-banner.armhint button { color: #2b2f3a; }
 @keyframes pulse3 { 50% { opacity: .65; } }
+
+.admin, .admin input, .admin select, .admin textarea, .admin button, .admin label, .admin a { color: #ffffff; }
+.admin ::placeholder { color: #ffffffa6; }
+.admin option { color: #111; }
+.admin .btn-primary, .admin .tabs button.on, .admin .count { color: var(--onPrimary); }
+.admin .call-banner button { color: #c62828; }
+.admin .qr-card, .admin .qr-card * { color: #111; }
+.admin .qr-card a.btn { color: #fff; }
