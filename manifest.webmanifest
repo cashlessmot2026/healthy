@@ -1,6 +1,7 @@
 {
   "name": "Healthy & Tasty · Menú digital",
   "short_name": "Healthy & Tasty",
+  "id": "./",
   "description": "Menú digital, pedido rápido con seguimiento y mesero virtual con IA.",
   "lang": "es",
   "start_url": "./",

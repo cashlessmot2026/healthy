@@ -113,8 +113,11 @@ function useCart() {
   return { lines, setLines, add, setQty, clear: () => setLines([]) };
 }
 
+const getCustomer = () => store.get('customer', null);
 async function submitOrder({ lines, table, notes, source, customer }) {
-  const payload = { items: lines, total: cartTotal(lines), table_no: table || '', notes: notes || '', source, customer_name: customer || '' };
+  const c = getCustomer() || {};
+  const payload = { items: lines, total: cartTotal(lines), table_no: table || '', notes: notes || '', source,
+    customer_name: customer || c.name || '', customer_phone: c.phone || '', address: c.address || '', lat: c.lat ?? null, lng: c.lng ?? null };
   try {
     const r = await rpc('create_order', { p_order: payload });
     return { ...payload, ...r };
@@ -199,6 +202,80 @@ function LiveStatus({ order, onChange }) {
   return html`<div style=${{ margin: '12px 0 4px' }}><${StatusTrack} status=${status}/></div>`;
 }
 
+// ---------- Instalar como app ----------
+let deferredInstall = null;
+const installSubs = new Set();
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; installSubs.forEach((f) => f()); });
+addEventListener('appinstalled', () => { deferredInstall = null; installSubs.forEach((f) => f()); });
+function InstallButton({ className = 'btn btn-ghost', style }) {
+  const [, force] = useState(0);
+  const [help, setHelp] = useState(false);
+  useEffect(() => { const f = () => force((n) => n + 1); installSubs.add(f); return () => installSubs.delete(f); }, []);
+  if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) return null;
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const click = async () => {
+    if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch {} deferredInstall = null; force((n) => n + 1); }
+    else setHelp(true);
+  };
+  return html`<span>
+    <button type="button" className=${className} style=${{ padding: '10px 14px', fontSize: 14, ...style }} onClick=${click}>📲 Instalar app</button>
+    ${help && html`<${Sheet} onClose=${() => setHelp(false)}>
+      <div className="row between"><h2>Instalar Healthy & Tasty</h2><button className="icon-btn" onClick=${() => setHelp(false)}>✕</button></div>
+      ${ios ? html`<ol style=${{ lineHeight: 1.7 }}><li>Toca el botón <b>Compartir</b> (el cuadro con la flecha ⬆️) de Safari.</li><li>Elige <b>Añadir a pantalla de inicio</b>.</li><li>Toca <b>Añadir</b>.</li></ol>`
+        : html`<ol style=${{ lineHeight: 1.7 }}><li>Abre el menú del navegador (<b>⋮</b>).</li><li>Elige <b>Instalar app</b> o <b>Añadir a pantalla de inicio</b>.</li><li>Confirma con <b>Instalar</b>.</li></ol>
+          <p className="muted" style=${{ fontSize: 13 }}>Si no aparece, abre esta página en Chrome o Safari (no desde otra app).</p>`}
+    <//>`}
+  </span>`;
+}
+
+// ---------- Datos del cliente (nombre, teléfono, dirección y GPS) ----------
+function CustomerForm({ initial, showTable, table: tbl0, cta, onDone }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [phone, setPhone] = useState(initial?.phone || '');
+  const [address, setAddress] = useState(initial?.address || '');
+  const [coords, setCoords] = useState(initial?.lat != null ? { lat: initial.lat, lng: initial.lng } : null);
+  const [table, setTable] = useState(tbl0 || '');
+  const [locating, setLocating] = useState(false);
+  const [locErr, setLocErr] = useState('');
+  const locate = () => {
+    if (!navigator.geolocation) { setLocErr('Tu navegador no permite obtener la ubicación. Escribe tu dirección.'); return; }
+    setLocating(true); setLocErr('');
+    navigator.geolocation.getCurrentPosition(
+      (p) => { setCoords({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) }); setLocating(false); },
+      (e) => { setLocErr(e.code === 1 ? 'Permiso de ubicación denegado. Actívalo en tu navegador o escribe tu dirección.' : 'No pudimos obtener tu ubicación. Escribe tu dirección.'); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  };
+  useEffect(() => { if (!coords) locate(); }, []);
+  const phoneOk = phone.replace(/\D/g, '').length >= 7;
+  const ok = name.trim() && phoneOk && (address.trim() || coords);
+  const go = (e) => {
+    e.preventDefault();
+    const c = { name: name.trim(), phone: phone.trim(), address: address.trim(), lat: coords?.lat ?? null, lng: coords?.lng ?? null };
+    store.set('customer', c); store.set('cname', c.name, sessionStorage);
+    onDone(c, table.trim());
+  };
+  return html`<form onSubmit=${go}>
+    <label className="lbl">Tu nombre<input className="field" autoComplete="name" value=${name} placeholder="Ej: Laura Gómez" onChange=${(e) => setName(e.target.value)}/></label>
+    <label className="lbl">Teléfono<input className="field" type="tel" inputMode="tel" autoComplete="tel" value=${phone} placeholder="Ej: 3001234567" onChange=${(e) => setPhone(e.target.value)}/></label>
+    <label className="lbl">Dirección<input className="field" autoComplete="street-address" value=${address} placeholder="Calle, número, barrio…" onChange=${(e) => setAddress(e.target.value)}/></label>
+    <button type="button" className="gps-btn" onClick=${locate} disabled=${locating}>${locating ? '📡 Buscando tu ubicación…' : coords ? '📍 Actualizar mi ubicación' : '📍 Usar mi ubicación (GPS)'}</button>
+    ${coords && html`<div className="gps-ok">✓ Ubicación guardada (${coords.lat}, ${coords.lng})</div>`}
+    ${locErr && html`<div className="err" style=${{ marginTop: 0 }}>${locErr}</div>`}
+    ${showTable && html`<label className="lbl">Número de mesa (opcional)<input className="field" inputMode="numeric" value=${table} placeholder="Ej: 7" onChange=${(e) => setTable(e.target.value)}/></label>`}
+    <button className="btn btn-primary btn-block" disabled=${!ok}>${cta || 'Continuar →'}</button>
+    ${!ok && html`<p className="hint">Falta tu nombre, un teléfono válido y tu dirección o ubicación.</p>`}
+  </form>`;
+}
+function CustomerGate({ rest, intro, ...p }) {
+  return html`<div className="gate"><div className="gate-card">
+    <img className="logo" src=${asset(rest?.logo)} alt=${rest?.name || ''}/>
+    <h1>¡Bienvenido!</h1>
+    <p className="muted" style=${{ margin: 0 }}>${intro}</p>
+    <${CustomerForm} ...${p}/>
+    <div style=${{ marginTop: 14 }}><${InstallButton}/></div>
+  </div></div>`;
+}
+
 // ---------- Llamar al mesero ----------
 function WaiterButton({ table, name }) {
   const [callId, setCallId] = useState(() => store.get('wcall', null, sessionStorage));
@@ -266,6 +343,11 @@ function Ticket({ order, menu, preview, onClose, onConfirm, onNew, busy, live = 
           ${order.customer_name ? html` · ${order.customer_name}` : ''}
           ${order.source === 'ia' ? ' · Mesero IA' : ''}
         </div>
+        ${(order.customer_phone || order.address || order.lat != null) && html`<div className="t-foot" style=${{ textAlign: 'left', marginTop: 6 }}>
+          ${order.customer_phone && html`<div>📞 ${order.customer_phone}</div>`}
+          ${order.address && html`<div>📍 ${order.address}</div>`}
+          ${order.lat != null && html`<div><a href=${`https://www.google.com/maps?q=${order.lat},${order.lng}`} target="_blank" rel="noopener">Ver en el mapa (${order.lat}, ${order.lng})</a></div>`}
+        </div>`}
         <div className="dash"></div>
         ${groups.map(([rid, ls]) => html`<div key=${rid}>
           <span className="t-rest" style=${{ background: R[rid]?.colors?.primary || '#222', color: R[rid]?.colors?.onPrimary || '#fff' }}>${R[rid]?.name || rid}</span>
@@ -359,7 +441,7 @@ function ProductModal({ product, menu, onClose, onAdd }) {
 
 function CartSheet({ cart, menu, onClose, onConfirm, busy, session }) {
   const [table, setTable] = useState(session?.table || TABLE || store.get('table', '', sessionStorage));
-  const [customer, setCustomer] = useState(session?.name || store.get('cname', '', sessionStorage));
+  const [customer, setCustomer] = useState(session?.name || getCustomer()?.name || store.get('cname', '', sessionStorage));
   const [notes, setNotes] = useState('');
   const R = byId(menu.restaurants);
   const rids = [...new Set(cart.lines.map((l) => l.restaurant_id))];
@@ -423,7 +505,7 @@ function RestaurantView({ rest, menu, cart, onBack, toast, greet, waiter }) {
   return html`<div className="rest-view">
     <div className="wrap rest-head">
       <div className="row between">
-        ${onBack ? html`<button className="icon-btn" aria-label="Volver" onClick=${onBack}>←</button>` : html`<span>${TABLE ? html`<span className="badge-table">🪑 Mesa ${TABLE}</span>` : ''}</span>`}
+        ${onBack ? html`<button className="icon-btn" aria-label="Volver" onClick=${onBack}>←</button>` : html`<span className="row">${TABLE ? html`<span className="badge-table">🪑 Mesa ${TABLE}</span>` : ''}<${InstallButton}/></span>`}
         <button className="btn btn-ghost" style=${{ padding: '10px 14px', fontSize: 14 }} onClick=${() => setShowMenu(true)}>📜 Carta original</button>
       </div>
       <img className="logo" src=${asset(rest.logo)} alt=${rest.name}/>
@@ -469,9 +551,12 @@ function MenuApp() {
   const [busy, setBusy] = useState(false);
   const [msg, toast] = useToast();
   useEffect(() => { store.set('last-order', order, sessionStorage); }, [order]);
+  const [cust, setCust] = useState(getCustomer);
   if (!menu) return html`<${Loader} error=${error} onRetry=${reload}/>`;
   const rest = menu.restaurants[0];
   if (!rest) return html`<${Loader} error="El menú aún no tiene datos." onRetry=${reload}/>`;
+
+  if (!cust) return html`<${CustomerGate} rest=${rest} intro="Antes de ver la carta, cuéntanos quién eres para atenderte mejor." cta="Ver la carta →" onDone=${(c) => setCust(c)}/>`;
 
   const confirm = async ({ table, notes, customer }) => {
     setBusy(true);
@@ -505,8 +590,6 @@ function QuickApp() {
   const [busy, setBusy] = useState(false);
   const [bye, setBye] = useState(null);
   const [msg, toast] = useToast();
-  const [name, setName] = useState('');
-  const [mesa, setMesa] = useState(TABLE);
   const keep = (sx) => { setSess(sx); if (sx) store.set('quick', sx); else store.del('quick'); };
 
   // sondeo del estado de cada pedido abierto
@@ -545,15 +628,9 @@ function QuickApp() {
     <p className="muted" style=${{ maxWidth: 340, margin: '0 auto 22px' }}>${bye.delivered ? 'Tu pedido fue entregado y tu sesión se cerró. ¡Vuelve pronto a Healthy & Tasty!' : 'Tu sesión se cerró. Puedes iniciar otra cuando quieras.'}</p>
     <button className="btn btn-primary" onClick=${() => setBye(null)}>Nuevo pedido</button></div></div>`;
 
-  if (!sess) return html`<div className="gate"><div className="gate-card">
-    <img className="logo" src=${asset(rest.logo)} alt=${rest.name}/>
-    <h1>¡Bienvenido!</h1>
-    <p className="muted" style=${{ margin: 0 }}>Dinos cómo te llamas y pide en segundos. Verás el estado de tu pedido aquí mismo.</p>
-    <form onSubmit=${(e) => { e.preventDefault(); keep({ name: name.trim(), table: mesa.trim(), orders: [], started: Date.now() }); setView('menu'); }}>
-      <label className="lbl">Tu nombre<input className="field" autoFocus value=${name} placeholder="Ej: Laura" onChange=${(e) => setName(e.target.value)}/></label>
-      <label className="lbl">Número de mesa (opcional)<input className="field" inputMode="numeric" value=${mesa} placeholder="Ej: 7" onChange=${(e) => setMesa(e.target.value)}/></label>
-      <button className="btn btn-primary btn-block" disabled=${!name.trim()}>Ver la carta →</button>
-    </form></div></div>`;
+  if (!sess) return html`<${CustomerGate} rest=${rest} showTable table=${TABLE} initial=${getCustomer()}
+    intro="Dinos quién eres y pide en segundos. Verás el estado de tu pedido aquí mismo." cta="Ver la carta →"
+    onDone=${(c, table) => { keep({ name: c.name, table, orders: [], started: Date.now() }); setView('menu'); }}/>`;
 
   const confirm = async ({ table, notes }) => {
     setBusy(true);
@@ -678,6 +755,7 @@ function AIApp() {
   const { menu: raw, error, reload } = useMenu();
   const menu = useMemo(() => publicMenu(raw), [raw]);
   useTheme(menu);
+  const [cust, setCust] = useState(getCustomer);
   const waiter = 'Leo';
   const greeting = `¡Hola! Bienvenido a Healthy & Tasty 👋 Soy ${waiter}, tu mesero virtual. ¿Qué deseas probar hoy? ¿Algo dulce, un sándwich o un café?`;
   const [started, setStarted] = useState(false);
@@ -707,6 +785,7 @@ function AIApp() {
   }, [micOpen, voice.ended]);
 
   if (!menu) return html`<div className="ai"><${Loader} error=${error} onRetry=${reload}/></div>`;
+  if (!cust) return html`<${CustomerGate} rest=${menu.restaurants[0]} intro="Antes de hablar con Leo, necesitamos tus datos para tomar tu pedido." cta="Hablar con Leo →" initial=${null} onDone=${(c) => setCust(c)}/>`;
   const P = byId(menu.products), R = byId(menu.restaurants);
 
   const start = () => {
@@ -771,12 +850,13 @@ function AIApp() {
       <p className="muted" style=${{ maxWidth: 420, margin: '0 auto 24px' }}>Tu mesero virtual de Healthy & Tasty. Te ayudo a elegir tu postre, sándwich o bebida y tomo tu pedido.${TABLE ? ` Mesa ${TABLE}.` : ''}</p>
       <${Glow} className="btn" c1="#F7ADB6" c2="#0F3D2C" inner="#0F3D2C" style=${{ color: '#FDF1F2', fontSize: 18, padding: 0 }} onClick=${start}>
         <span style=${{ padding: '16px 34px', display: 'block', fontWeight: 800 }}>Toca para comenzar 🎙️</span><//>
+      <div style=${{ marginTop: 16 }}><${InstallButton}/></div>
     </div></div>`}
 
     <header className="ai-top">
       <div className=${'avatar' + (voice.speaking || thinking ? ' talking' : '')}><span>🤵</span></div>
       <div className="grow"><b>${waiter} · Mesero virtual</b><div className="muted" style=${{ fontSize: 13 }}>${status}</div></div>
-      <${WaiterButton} table=${TABLE} name=${store.get('cname', '', sessionStorage)}/>
+      <${WaiterButton} table=${TABLE} name=${cust?.name || ''}/>
       <button className="icon-btn" title=${voiceOn ? 'Silenciar voz' : 'Activar voz'} onClick=${() => { if (voiceOn) voice.stop(); setVoiceOn(!voiceOn); }}>${voiceOn ? '🔊' : '🔇'}</button>
     </header>
 
@@ -1084,8 +1164,8 @@ function AdminOrders({ token, menu, toast, onLogout }) {
     <div className="panel">${orders.length === 0 && html`<p className="muted">Todavía no hay pedidos.</p>`}
       ${orders.map((o) => html`<div className="a-row" key=${o.id} style=${{ flexWrap: 'wrap' }}>
         <button className="grow" style=${{ textAlign: 'left' }} onClick=${() => setView(o)}>
-          <b>#${o.code}</b> ${o.customer_name && html`· ${o.customer_name}`} ${o.table_no && html`· Mesa ${o.table_no}`} · ${money(o.total)} ${o.source === 'ia' ? '· 🤖' : o.source === 'rapido' ? '· ⚡' : ''}
-          <div className="muted" style=${{ fontSize: 13 }}>${new Date(o.created_at).toLocaleString('es-CO')} · ${(o.items || []).map((l) => l.qty + '× ' + lineTitle(l)).join(', ')}</div></button>
+          <b>#${o.code}</b> ${o.customer_name && html`· ${o.customer_name}`}${o.customer_phone && html` · 📞 ${o.customer_phone}`} ${o.table_no && html`· Mesa ${o.table_no}`} · ${money(o.total)} ${o.source === 'ia' ? '· 🤖' : o.source === 'rapido' ? '· ⚡' : ''}
+          <div className="muted" style=${{ fontSize: 13 }}>${o.address ? '📍 ' + o.address + (o.lat != null ? ` (${o.lat}, ${o.lng})` : '') + ' · ' : o.lat != null ? `📍 ${o.lat}, ${o.lng} · ` : ''}${new Date(o.created_at).toLocaleString('es-CO')} · ${(o.items || []).map((l) => l.qty + '× ' + lineTitle(l)).join(', ')}</div></button>
         <span className=${'status st-' + o.status}>${o.status}</span>
         <select className="field" style=${{ width: 140, padding: '8px 10px' }} value=${o.status} onChange=${(e) => setStatus(o, e.target.value)}>
           ${['nuevo', 'preparando', 'listo', 'entregado', 'cancelado'].map((s) => html`<option key=${s}>${s}</option>`)}</select>

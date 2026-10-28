@@ -174,13 +174,13 @@ textarea.field { resize: vertical; min-height: 64px; }
 .splash h1 { font-family: var(--display); font-size: clamp(30px, 7vw, 46px); margin: 6px 0; }
 
 /* ---------- Admin ---------- */
-.admin { --bg: #0f1115; --card: #171a21; --text: #ffffff; --muted: #e3e7f0; color: #ffffff; --primary: #F7ADB6; --secondary: #6FB3E8; --accent: #F7ADB6; --onPrimary: #0F3D2C; min-height: 100vh; }
-.admin-top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.07); position: sticky; top: 0; z-index: 30; background: rgba(15,17,21,.92); backdrop-filter: blur(8px); flex-wrap: wrap; }
+.admin { --bg: #ffffff; --card: #f4f5f8; --text: #111111; --muted: #444b59; --primary: #111111; --secondary: #F7ADB6; --accent: #c2185b; --onPrimary: #ffffff; color: #111111; background: #ffffff; min-height: 100vh; }
+.admin-top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,.12); position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.95); backdrop-filter: blur(8px); flex-wrap: wrap; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 12px 16px; scrollbar-width: none; }
 .tabs button { flex: none; padding: 9px 14px; border-radius: 12px; font-weight: 600; font-size: 14px; color: var(--muted); }
 .tabs button.on { background: var(--primary); color: var(--onPrimary); }
-.panel { background: var(--card); border-radius: 18px; padding: 16px; margin-bottom: 14px; border: 1px solid rgba(255,255,255,.05); }
-.a-row { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.panel { background: var(--card); border-radius: 18px; padding: 16px; margin-bottom: 14px; border: 1px solid rgba(0,0,0,.1); }
+.a-row { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid rgba(0,0,0,.1); }
 .a-row:last-child { border-bottom: 0; }
 .a-row.off { opacity: .45; }
 .grid2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
@@ -230,10 +230,18 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; fo
 .call-banner.armhint button { color: #2b2f3a; }
 @keyframes pulse3 { 50% { opacity: .65; } }
 
-.admin, .admin input, .admin select, .admin textarea, .admin button, .admin label, .admin a { color: #ffffff; }
-.admin ::placeholder { color: #ffffffa6; }
+.admin, .admin input, .admin select, .admin textarea, .admin button, .admin label, .admin a { color: #111111; }
+.admin ::placeholder { color: #6b7280; }
 .admin option { color: #111; }
-.admin .btn-primary, .admin .tabs button.on, .admin .count { color: var(--onPrimary); }
-.admin .call-banner button { color: #c62828; }
+.admin .btn-primary, .admin .tabs button.on, .admin .count, .admin .btn-danger { color: #ffffff; }
 .admin .qr-card, .admin .qr-card * { color: #111; }
-.admin .qr-card a.btn { color: #fff; }
+.admin .status { font-weight: 800; }
+.admin .st-nuevo { background: #fff0b8; color: #6b4e00; } .admin .st-preparando { background: #cfe6ff; color: #0b3d75; }
+.admin .st-listo { background: #ffd3da; color: #8a1030; } .admin .st-entregado { background: #cdeed3; color: #14532d; } .admin .st-cancelado { background: #ffd0d0; color: #8a1111; }
+.admin a { text-decoration: underline; }
+.admin .pill-link { text-decoration: none; }
+
+/* ---------- Datos del cliente / instalar app ---------- */
+.gate-card form .hint { font-size: 12.5px; color: var(--muted); margin: -6px 0 0; }
+.gps-btn { width: 100%; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--secondary) 55%, var(--card)); font-weight: 700; }
+.gps-ok { font-size: 13px; color: #14532d; font-weight: 600; }
