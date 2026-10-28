@@ -1,0 +1,20 @@
+{
+  "name": "Healthy & Tasty · Menú digital",
+  "short_name": "Healthy & Tasty",
+  "description": "Menú digital, pedido rápido con seguimiento y mesero virtual con IA.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FDF1F2",
+  "theme_color": "#FDF1F2",
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Pedido rápido", "url": "./rapido/", "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Mesero virtual", "url": "./ia/", "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
