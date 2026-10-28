@@ -218,3 +218,14 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; fo
 .quick-bar button { width: 100%; padding: 12px 16px; border-radius: 16px; background: var(--secondary); color: var(--primary); font-weight: 700; box-shadow: var(--shadow); display: flex; align-items: center; gap: 10px; }
 .live-status { display: flex; align-items: center; gap: 8px; justify-content: center; font-family: var(--font); font-weight: 700; margin: 10px 0 0; }
 .live-status .dot { width: 10px; height: 10px; border-radius: 50%; background: #2e9e5b; animation: blink 1.4s infinite; }
+
+/* ---------- Llamar al mesero ---------- */
+.btn-call { background: var(--secondary); color: var(--primary); padding: 11px 18px; font-size: 15px; box-shadow: 0 6px 18px -8px var(--primary); }
+.btn-call.waiting { background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: none; }
+.call-banner { position: fixed; z-index: 95; left: 0; right: 0; top: 0; padding: 10px 14px; background: #c62828; color: #fff; display: grid; gap: 8px; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+.call-banner.armhint { background: #2b2f3a; }
+.call-banner .call { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 17px; animation: pulse3 1.2s ease-in-out infinite; }
+.call-banner .call .grow small { font-weight: 500; opacity: .85; }
+.call-banner button { background: #fff; color: #c62828; font-weight: 800; padding: 8px 14px; border-radius: 12px; }
+.call-banner.armhint button { color: #2b2f3a; }
+@keyframes pulse3 { 50% { opacity: .65; } }

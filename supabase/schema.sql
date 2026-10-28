@@ -345,6 +345,49 @@ end $$;
 
 insert into public.settings (key, value) values ('ai_fallback_model', 'gemini-3.1-flash-lite') on conflict (key) do nothing;
 
+-- ---------- Llamar al mesero ----------
+create table if not exists public.waiter_calls (
+  id uuid primary key default gen_random_uuid(),
+  table_no text not null,
+  customer_name text default '',
+  created_at timestamptz default now(),
+  attended_at timestamptz
+);
+alter table public.waiter_calls enable row level security;
+revoke all on public.waiter_calls from anon, authenticated;
+
+-- El cliente llama al mesero (una sola llamada pendiente por mesa).
+create or replace function public.call_waiter(p_table text, p_name text default '') returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare t text := left(trim(coalesce(p_table, '')), 20); w waiter_calls;
+begin
+  if t = '' then raise exception 'Indica tu número de mesa'; end if;
+  select * into w from waiter_calls where table_no = t and attended_at is null order by created_at desc limit 1;
+  if found then return jsonb_build_object('id', w.id, 'already', true); end if;
+  insert into waiter_calls(table_no, customer_name) values (t, left(coalesce(p_name, ''), 60)) returning * into w;
+  return jsonb_build_object('id', w.id, 'already', false);
+end $$;
+
+create or replace function public.waiter_call_status(p_id uuid) returns jsonb
+language sql security definer set search_path = public as $$
+  select jsonb_build_object('attended', attended_at is not null) from waiter_calls where id = p_id;
+$$;
+
+create or replace function public.admin_calls(p_token uuid) returns setof public.waiter_calls
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _admin_check(p_token);
+  return query select * from waiter_calls where attended_at is null order by created_at;
+end $$;
+
+create or replace function public.admin_call_done(p_token uuid, p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _admin_check(p_token);
+  update waiter_calls set attended_at = now() where id = p_id;
+  delete from waiter_calls where attended_at < now() - interval '2 days';
+end $$;
+
 -- La llamada a Gemini puede tardar unos segundos.
 alter role anon set statement_timeout = '30s';
 notify pgrst, 'reload config';

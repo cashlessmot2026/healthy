@@ -199,6 +199,50 @@ function LiveStatus({ order, onChange }) {
   return html`<div style=${{ margin: '12px 0 4px' }}><${StatusTrack} status=${status}/></div>`;
 }
 
+// ---------- Llamar al mesero ----------
+function WaiterButton({ table, name }) {
+  const [callId, setCallId] = useState(() => store.get('wcall', null, sessionStorage));
+  const [thanks, setThanks] = useState(false);
+  const [ask, setAsk] = useState(false);
+  const [mesa, setMesa] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (!callId) return;
+    let alive = true, t;
+    const tick = async () => {
+      try {
+        const r = await rpc('waiter_call_status', { p_id: callId });
+        if (alive && (!r || r.attended)) {
+          store.del('wcall', sessionStorage); setCallId(null); setThanks(true); setTimeout(() => alive && setThanks(false), 5000); return;
+        }
+      } catch {}
+      if (alive) t = setTimeout(tick, 5000);
+    };
+    tick();
+    return () => { alive = false; clearTimeout(t); };
+  }, [callId]);
+  const call = async (tb) => {
+    setBusy(true); setErr('');
+    try {
+      const r = await rpc('call_waiter', { p_table: tb, p_name: name || '' });
+      store.set('wcall', r.id, sessionStorage); store.set('table', tb, sessionStorage); setCallId(r.id); setAsk(false);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const click = () => { const tb = table || store.get('table', '', sessionStorage); if (tb) call(tb); else setAsk(true); };
+  return html`<span>
+    <button className=${'btn btn-call' + (callId ? ' waiting' : '')} disabled=${busy || !!callId} onClick=${click}>
+      ${callId ? '⏳ Mesero avisado, ya viene' : thanks ? '✅ ¡Listo, el mesero fue!' : '🔔 Llamar mesero'}</button>
+    ${err && !ask && html`<div className="err" style=${{ textAlign: 'center' }}>${err}</div>`}
+    ${ask && html`<${Sheet} onClose=${() => setAsk(false)}>
+      <div className="row between"><h2>¿En qué mesa estás?</h2><button className="icon-btn" onClick=${() => setAsk(false)}>✕</button></div>
+      <label className="lbl sec">Número de mesa<input className="field" autoFocus inputMode="numeric" value=${mesa} placeholder="Ej: 7" onChange=${(e) => setMesa(e.target.value)}/></label>
+      ${err && html`<div className="err">${err}</div>`}
+      <button className="btn btn-primary btn-block sec" disabled=${!mesa.trim() || busy} onClick=${() => call(mesa.trim())}>${busy ? 'Llamando…' : '🔔 Llamar al mesero'}</button>
+    <//>`}
+  </span>`;
+}
+
 // ---------- Ticket virtual ----------
 function Ticket({ order, menu, preview, onClose, onConfirm, onNew, busy, live = true }) {
   const R = byId(menu?.restaurants);
@@ -363,7 +407,7 @@ function CartBar({ lines, onOpen, colors }) {
   <//></div>`;
 }
 
-function RestaurantView({ rest, menu, cart, onBack, toast, greet }) {
+function RestaurantView({ rest, menu, cart, onBack, toast, greet, waiter }) {
   const cats = menu.categories.filter((c) => c.restaurant_id === rest.id);
   const [active, setActive] = useState(cats[0]?.id);
   const [prod, setProd] = useState(null);
@@ -385,6 +429,7 @@ function RestaurantView({ rest, menu, cart, onBack, toast, greet }) {
       <img className="logo" src=${asset(rest.logo)} alt=${rest.name}/>
       ${greet && html`<h1 className="center" style=${{ fontFamily: 'var(--display)', fontSize: 26, margin: '4px 0' }}>${greet}</h1>`}
       <p className="center muted" style=${{ margin: 0, fontSize: 14 }}>${rest.tagline}</p>
+      ${waiter && html`<div className="center" style=${{ marginTop: 12 }}><${WaiterButton} table=${waiter.table} name=${waiter.name}/></div>`}
     </div>
     <nav className="chips">${cats.map((cat) => html`<button key=${cat.id} className=${'chip' + (active === cat.id ? ' on' : '')}
       onClick=${() => refs.current[cat.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>${cat.name}</button>`)}</nav>
@@ -435,7 +480,7 @@ function MenuApp() {
   };
 
   return html`<div>
-    <${RestaurantView} rest=${rest} menu=${menu} cart=${cart} toast=${toast}/>
+    <${RestaurantView} rest=${rest} menu=${menu} cart=${cart} toast=${toast} waiter=${{ table: TABLE, name: store.get('cname', '', sessionStorage) }}/>
     ${order && !cartOpen && html`<div className="quick-bar"><button onClick=${() => setOrder({ ...order, __open: true })}>🧾 Ver el estado de mi pedido #${order.code}</button></div>`}
     <${CartBar} lines=${cart.lines} colors=${rest.colors} onOpen=${() => setCartOpen(true)}/>
     ${cartOpen && html`<${CartSheet} cart=${cart} menu=${menu} busy=${busy} onClose=${() => setCartOpen(false)} onConfirm=${confirm}/>`}
@@ -531,11 +576,12 @@ function QuickApp() {
     </div>`)}
     <div className="row" style=${{ marginTop: 18 }}>
       <button className="btn btn-ghost grow" onClick=${() => setView('menu')}>➕ Pedir algo más</button></div>
+    <div className="center" style=${{ marginTop: 12 }}><${WaiterButton} table=${sess.table} name=${sess.name}/></div>
     <p className="center muted" style=${{ fontSize: 13, marginTop: 14 }}>Cuando todo esté entregado, esta sesión se cierra sola.</p>
   </div></div>`;
 
   return html`<div>
-    <${RestaurantView} rest=${rest} menu=${menu} cart=${cart} toast=${toast} greet=${`Hola, ${sess.name}`}/>
+    <${RestaurantView} rest=${rest} menu=${menu} cart=${cart} toast=${toast} greet=${`Hola, ${sess.name}`} waiter=${{ table: sess.table, name: sess.name }}/>
     ${open && !cartOpen && html`<div className="quick-bar"><button onClick=${() => setView('track')}>🧾 Ver el estado de mi pedido</button></div>`}
     <${CartBar} lines=${cart.lines} colors=${rest.colors} onOpen=${() => setCartOpen(true)}/>
     ${cartOpen && html`<${CartSheet} cart=${cart} menu=${menu} busy=${busy} session=${sess} onClose=${() => setCartOpen(false)} onConfirm=${confirm}/>`}
@@ -730,6 +776,7 @@ function AIApp() {
     <header className="ai-top">
       <div className=${'avatar' + (voice.speaking || thinking ? ' talking' : '')}><span>🤵</span></div>
       <div className="grow"><b>${waiter} · Mesero virtual</b><div className="muted" style=${{ fontSize: 13 }}>${status}</div></div>
+      <${WaiterButton} table=${TABLE} name=${store.get('cname', '', sessionStorage)}/>
       <button className="icon-btn" title=${voiceOn ? 'Silenciar voz' : 'Activar voz'} onClick=${() => { if (voiceOn) voice.stop(); setVoiceOn(!voiceOn); }}>${voiceOn ? '🔊' : '🔇'}</button>
     </header>
 
@@ -825,11 +872,83 @@ function DelBtn({ onDelete }) {
     : html`<button className="icon-btn" title="Eliminar" onClick=${() => setAsk(true)}>🗑️</button>`;
 }
 
+// Sirena fuerte + voz: "El cliente de la mesa N te llama". Se repite hasta que se marque como atendido.
+function playSiren(ctx) {
+  const t0 = ctx.currentTime, g = ctx.createGain(), o = ctx.createOscillator();
+  o.type = 'square'; g.gain.setValueAtTime(1, t0); g.gain.setValueAtTime(0, t0 + 1.5);
+  for (let i = 0; i < 6; i++) o.frequency.setValueAtTime(i % 2 ? 880 : 1320, t0 + i * 0.25);
+  o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 1.5);
+}
+function WaiterAlarm({ token, onLogout }) {
+  const [calls, setCalls] = useState([]);
+  const [armed, setArmed] = useState(false);
+  const ctx = useRef(null);
+  const callsRef = useRef([]); callsRef.current = calls;
+  useEffect(() => {
+    const unlock = () => {
+      try {
+        const C = window.AudioContext || window.webkitAudioContext;
+        ctx.current ||= new C();
+        ctx.current.resume().then(() => setArmed(ctx.current.state === 'running'));
+        speechSynthesis.getVoices();
+      } catch {}
+    };
+    unlock();
+    const evs = ['pointerdown', 'keydown'];
+    evs.forEach((e) => addEventListener(e, unlock));
+    return () => evs.forEach((e) => removeEventListener(e, unlock));
+  }, []);
+  useEffect(() => {
+    let alive = true, t;
+    const tick = async () => {
+      try { const r = await rpc('admin_calls', { p_token: token }); if (alive) setCalls(r || []); }
+      catch (e) { if (/Sesión expirada/.test(e.message)) { onLogout(); return; } }
+      if (alive) t = setTimeout(tick, 3000);
+    };
+    tick();
+    return () => { alive = false; clearTimeout(t); };
+  }, [token]);
+  const key = calls.map((c) => c.id).join(',');
+  useEffect(() => {
+    if (!key || !armed) return;
+    let stop = false, t, v;
+    const ring = () => {
+      if (stop) return;
+      try { playSiren(ctx.current); } catch {}
+      v = setTimeout(() => {
+        try {
+          speechSynthesis.cancel();
+          callsRef.current.forEach((c) => {
+            const u = new SpeechSynthesisUtterance(`El cliente de la mesa ${c.table_no}`);
+            u.lang = 'es-CO'; u.volume = 1; u.rate = 0.95; speechSynthesis.speak(u);
+          });
+        } catch {}
+      }, 1700);
+      t = setTimeout(ring, 9000);
+    };
+    ring();
+    return () => { stop = true; clearTimeout(t); clearTimeout(v); try { speechSynthesis.cancel(); } catch {} };
+  }, [key, armed]);
+  const done = async (c) => {
+    setCalls((l) => l.filter((x) => x.id !== c.id));
+    try { await rpc('admin_call_done', { p_token: token, p_id: c.id }); } catch {}
+  };
+  if (!calls.length && armed) return null;
+  return html`<div className=${'call-banner' + (calls.length ? '' : ' armhint')}>
+    ${calls.map((c) => html`<div className="call" key=${c.id}><span style=${{ fontSize: 26 }}>🔔</span>
+      <div className="grow">El cliente de la mesa ${c.table_no} te llama<br/><small>${c.customer_name ? c.customer_name + ' · ' : ''}${new Date(c.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</small></div>
+      <button onClick=${() => done(c)}>Atendido</button></div>`)}
+    ${!armed && html`<div className="call" style=${{ animation: 'none' }}><span style=${{ fontSize: 22 }}>🔊</span>
+      <div className="grow" style=${{ fontSize: 15 }}>Toca para activar el sonido de los llamados<br/><small>El navegador lo exige una vez al abrir esta página</small></div>
+      <button onClick=${() => { try { ctx.current ||= new (window.AudioContext || window.webkitAudioContext)(); ctx.current.resume().then(() => setArmed(true)); } catch {} }}>Activar</button></div>`}
+  </div>`;
+}
+
 function AdminApp() {
   const [token, setToken] = useState(() => store.get('adm-token', null, sessionStorage));
   const logout = async () => { try { await rpc('admin_logout', { p_token: token }); } catch {} store.del('adm-token', sessionStorage); setToken(null); };
   if (!token) return html`<${AdminLogin} onLogin=${(t) => { store.set('adm-token', t, sessionStorage); setToken(t); }}/>`;
-  return html`<${AdminPanel} token=${token} onLogout=${logout}/>`;
+  return html`<${React.Fragment}><${AdminPanel} token=${token} onLogout=${logout}/><${WaiterAlarm} token=${token} onLogout=${logout}/><//>`;
 }
 
 function AdminLogin({ onLogin }) {
