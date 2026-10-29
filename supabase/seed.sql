@@ -17,7 +17,7 @@ end if;
 
 insert into public.restaurants (id, name, tagline, logo, menu_image, colors, sort) values
 ('healthy', 'Healthy & Tasty', 'Postres sin azúcar refinada · Sándwiches de masa madre · Café de especialidad',
- 'assets/logos/healthy.png', 'assets/menus/carta-1.jpg,assets/menus/carta-2.jpg',
+ 'assets/logos/healthy.png', 'assets/menus/carta-postres.jpg,assets/menus/carta-cafe.jpg',
  '{"bg":"#FDF1F2","card":"#FFFFFF","primary":"#0F3D2C","secondary":"#F7ADB6","accent":"#F7ADB6","text":"#0F3D2C","muted":"#5E7468","onPrimary":"#FDF1F2"}', 1);
 
 insert into public.categories (id, restaurant_id, name, note, sort) values
