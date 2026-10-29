@@ -1,5 +1,5 @@
 // Service worker: app shell en caché, datos siempre en línea.
-const VERSION = 'healthy-v7';
+const VERSION = 'healthy-v8';
 const SHELL = ['./', './index.html', './rapido/', './rapido/index.html', './ia/', './ia/index.html', './app.js', './styles.css', './manifest.webmanifest',
   './assets/logos/healthy.png', './assets/icons/icon-192.png'];
 

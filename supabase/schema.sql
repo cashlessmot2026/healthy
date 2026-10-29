@@ -71,8 +71,10 @@ create table if not exists public.orders (
   lat double precision,
   lng double precision,
   order_type text default 'mesa',         -- mesa | domicilio
+  client_phone text default '',           -- solo para que el cliente recupere su pedido; el admin no lo muestra en pedidos de mesa
   updated_at timestamptz default now()
 );
+alter table public.orders add column if not exists client_phone text default '';
 alter table public.orders add column if not exists order_type text default 'mesa';
 alter table public.orders add column if not exists customer_phone text default '';
 alter table public.orders add column if not exists address text default '';
@@ -239,13 +241,14 @@ begin
   end if;
   if jsonb_array_length(p_order->'items') > 60 then raise exception 'Pedido demasiado grande'; end if;
   c := upper(substr(translate(encode(gen_random_bytes(6), 'base64'), '+/=0O1Il', ''), 1, 4));
-  insert into orders(code, source, table_no, items, total, notes, customer_name, customer_phone, address, lat, lng, order_type)
+  insert into orders(code, source, table_no, items, total, notes, customer_name, customer_phone, address, lat, lng, order_type, client_phone)
   values (c, left(coalesce(p_order->>'source','menu'), 10), left(coalesce(p_order->>'table_no',''), 20),
           p_order->'items', coalesce((p_order->>'total')::int, 0), left(coalesce(p_order->>'notes',''), 500),
           left(coalesce(p_order->>'customer_name',''), 60), left(coalesce(p_order->>'customer_phone',''), 30),
           left(coalesce(p_order->>'address',''), 250),
           nullif(p_order->>'lat','')::double precision, nullif(p_order->>'lng','')::double precision,
-          case when p_order->>'order_type' = 'domicilio' then 'domicilio' else 'mesa' end)
+          case when p_order->>'order_type' = 'domicilio' then 'domicilio' else 'mesa' end,
+          left(coalesce(p_order->>'client_phone',''), 30))
   returning * into o;
   return jsonb_build_object('id', o.id, 'code', o.code, 'created_at', o.created_at);
 end $$;
@@ -258,6 +261,22 @@ language sql security definer set search_path = public as $$
     from orders where id = p_id;
 $$;
 grant execute on function public.order_status(uuid) to anon, authenticated;
+
+-- Recuperar los pedidos recientes de un cliente por su teléfono (si cambia de dispositivo o pierde los datos de la app).
+create or replace function public.my_orders(p_phone text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare d text := regexp_replace(coalesce(p_phone, ''), '\D', '', 'g');
+begin
+  if length(d) < 7 then return '[]'::jsonb; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'code', code, 'status', status, 'total', total, 'items', items,
+           'table_no', table_no, 'order_type', order_type, 'customer_name', customer_name, 'customer_phone', customer_phone,
+           'address', address, 'lat', lat, 'lng', lng, 'created_at', created_at) order by created_at)
+      from orders
+     where regexp_replace(coalesce(client_phone, ''), '\D', '', 'g') = d
+       and created_at > now() - interval '24 hours'
+       and (status not in ('entregado', 'cancelado') or updated_at > now() - interval '10 minutes')), '[]'::jsonb);
+end $$;
+grant execute on function public.my_orders(text) to anon, authenticated;
 
 -- ---------- Mesero IA (Gemini) ----------
 -- La API key vive en public.secrets y nunca sale de la base de datos.

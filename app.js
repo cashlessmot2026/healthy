@@ -122,7 +122,7 @@ async function submitOrder({ lines, notes, source, customer, ot }) {
   // En mesa solo viajan la mesa y el nombre; los datos de contacto solo se envían en domicilios.
   const payload = { items: lines, total: cartTotal(lines), notes: notes || '', source, order_type: dom ? 'domicilio' : 'mesa',
     table_no: dom ? '' : (ot?.table || '').trim(), customer_name: customer || c.name || '',
-    customer_phone: dom ? ot.phone.trim() : '', address: dom ? ot.address.trim() : '', lat: dom ? ot.lat ?? null : null, lng: dom ? ot.lng ?? null : null };
+    client_phone: dom ? ot.phone.trim() : (c.phone || ''), customer_phone: dom ? ot.phone.trim() : '', address: dom ? ot.address.trim() : '', lat: dom ? ot.lat ?? null : null, lng: dom ? ot.lng ?? null : null };
   try {
     const r = await rpc('create_order', { p_order: payload });
     addActive({ ...payload, ...r });
@@ -177,9 +177,21 @@ const loadActive = () => {
 const saveActive = (l) => store.set(ACTIVE_KEY, l);
 function addActive(o) {
   if (!o?.id || o.offline) return;
+  const status = o.status || 'nuevo';
   saveActive([...loadActive().filter((x) => x.id !== o.id),
-    { id: o.id, code: o.code, total: o.total, items: o.items, status: 'nuevo', table_no: o.table_no, order_type: o.order_type, t: Date.now() }]);
+    { ...o, status, t: Date.parse(o.created_at) || Date.now(), finalAt: FINAL.has(status) ? Date.now() : undefined }]);
   dispatchEvent(new Event('active-orders'));
+}
+// Trae del servidor los pedidos recientes del cliente (por su teléfono): sirve si cambió de dispositivo o perdió los datos de la app.
+async function restoreOrders(phone) {
+  if (!phoneOk(phone)) return 0;
+  try {
+    const list = (await rpc('my_orders', { p_phone: phone })) || [];
+    const have = new Set(loadActive().map((o) => o.id));
+    let added = 0;
+    list.forEach((o) => { if (!have.has(o.id)) { addActive(o); added++; } });
+    return added;
+  } catch { return 0; }
 }
 
 // ---------- Estado del pedido (seguimiento en vivo) ----------
@@ -377,10 +389,11 @@ function WaiterButton({ table, name }) {
   </span>`;
 }
 
-function OrderWatcher() {
+function OrderWatcher({ menu }) {
   const [list, setList] = useState(loadActive);
   const [open, setOpen] = useState(() => loadActive().some((o) => !FINAL.has(o.status)));
   const [offline, setOffline] = useState(false);
+  const [ticket, setTicket] = useState(null);
   useEffect(() => {
     let alive = true, t;
     const tick = async () => {
@@ -402,9 +415,12 @@ function OrderWatcher() {
       t = setTimeout(tick, fail ? 8000 : 4000);
     };
     const onAdd = () => { setList(loadActive()); tick(); };
+    const restore = () => restoreOrders(getCustomer()?.phone).then((n) => { if (n && alive) { setList(loadActive()); setOpen(true); } });
+    restore();
     tick();
+    addEventListener('online', restore);
     addEventListener('active-orders', onAdd); addEventListener('online', tick); document.addEventListener('visibilitychange', tick);
-    return () => { alive = false; clearTimeout(t); removeEventListener('active-orders', onAdd); removeEventListener('online', tick); document.removeEventListener('visibilitychange', tick); };
+    return () => { alive = false; clearTimeout(t); removeEventListener('active-orders', onAdd); removeEventListener('online', tick); removeEventListener('online', restore); document.removeEventListener('visibilitychange', tick); };
   }, []);
   const remove = (id) => { const l = loadActive().filter((x) => x.id !== id); saveActive(l); setList(l); };
   if (!list.length) return null;
@@ -418,9 +434,11 @@ function OrderWatcher() {
         <div className="row between"><b>Pedido #${o.code}${o.order_type === 'domicilio' ? ' · 🛵' : o.table_no ? ' · Mesa ' + o.table_no : ''}</b><b>${money(o.total)}</b></div>
         <div className="muted" style=${{ fontSize: 13 }}>${(o.items || []).map((l) => l.qty + '× ' + lineTitle(l)).join(' · ')}</div>
         <${StatusTrack} status=${o.status}/>
+        <button className="btn btn-ghost btn-block" style=${{ marginTop: 10 }} onClick=${() => setTicket(o)}>🎫 Ver mi ticket</button>
         ${FINAL.has(o.status) && html`<button className="btn btn-ghost btn-block" style=${{ marginTop: 10 }} onClick=${() => remove(o.id)}>Quitar de mi lista</button>`}
       </div>`)}
     <//>`}
+    ${ticket && html`<${Ticket} order=${ticket} menu=${menu} onClose=${() => setTicket(null)}/>`}
   </div>`;
 }
 
@@ -671,7 +689,7 @@ function MenuApp() {
     <${CartBar} lines=${cart.lines} colors=${rest.colors} onOpen=${() => setCartOpen(true)}/>
     ${cartOpen && html`<${CartSheet} cart=${cart} menu=${menu} busy=${busy} onClose=${() => setCartOpen(false)} onConfirm=${confirm}/>`}
     ${order && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder(null)} onNew=${() => setOrder(null)}/>`}
-    <${OrderWatcher}/>
+    <${OrderWatcher} menu=${menu}/>
     <${Toast} msg=${msg}/>
   </div>`;
 }
@@ -732,7 +750,11 @@ function QuickApp() {
 
   if (!sess) return html`<${CustomerGate} rest=${rest} showTable table=${TABLE} initial=${getCustomer()}
     intro="Dinos quién eres y pide en segundos. Verás el estado de tu pedido aquí mismo." cta="Ver la carta →"
-    onDone=${(c, table) => { keep({ name: c.name, table, orders: [], started: Date.now() }); setView('menu'); }}/>`;
+    onDone=${async (c, table) => {
+      const rs = phoneOk(c.phone) ? ((await rpc('my_orders', { p_phone: c.phone }).catch(() => [])) || []) : [];
+      keep({ name: c.name, table, started: Date.now(), orders: rs.map((o) => ({ id: o.id, code: o.code, total: o.total, items: o.items, status: o.status, created_at: o.created_at })) });
+      setView(rs.length ? 'track' : 'menu');
+    }}/>`;
 
   const confirm = async ({ ot, notes }) => {
     setBusy(true);
@@ -1005,7 +1027,7 @@ function AIApp() {
 
     ${preview && html`<${Ticket} preview busy=${busy} order=${{ items: lines, total: cartTotal(lines), table_no: TABLE, source: 'ia' }} menu=${menu}
       onClose=${() => setPreview(false)} onConfirm=${() => { setPreview(false); setCheckout(true); }}/>`}
-    <${OrderWatcher}/>
+    <${OrderWatcher} menu=${menu}/>
     ${checkout && html`<${AICheckout} lines=${lines} busy=${busy} onClose=${() => setCheckout(false)} onConfirm=${(ot) => finish(lines, ot)}/>`}
     ${order && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder(null)}
       onNew=${() => { setOrder(null); setLines([]); setChat([]); setHistory([]); setStarted(false); setHandsFree(true); }}/>`}
