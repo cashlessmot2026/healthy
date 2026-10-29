@@ -125,6 +125,7 @@ async function submitOrder({ lines, notes, source, customer, ot }) {
     customer_phone: dom ? ot.phone.trim() : '', address: dom ? ot.address.trim() : '', lat: dom ? ot.lat ?? null : null, lng: dom ? ot.lng ?? null : null };
   try {
     const r = await rpc('create_order', { p_order: payload });
+    addActive({ ...payload, ...r });
     return { ...payload, ...r };
   } catch (e) {
     return { ...payload, code: 'L-' + uid().slice(0, 3).toUpperCase(), created_at: new Date().toISOString(), offline: e.message };
@@ -164,6 +165,21 @@ function Loader({ error, onRetry }) {
     ${error ? html`<p>No pudimos cargar el menú.<br/><small className="muted">${error}</small></p>
       <button className="btn btn-primary" onClick=${onRetry}>Reintentar</button>` : html`<div className="spinner"></div>`}
   </div></div>`;
+}
+
+// ---------- Pedidos activos: se guardan en el dispositivo y sobreviven a cerrar la app ----------
+const ACTIVE_KEY = 'active-orders';
+const STATUS_SHORT = { nuevo: 'Recibido', preparando: 'Preparando', listo: '¡Listo!', entregado: 'Entregado', cancelado: 'Cancelado' };
+const loadActive = () => {
+  const now = Date.now();
+  return (store.get(ACTIVE_KEY, []) || []).filter((o) => o?.id && now - (o.t || 0) < 24 * 3600e3 && !(o.finalAt && now - o.finalAt > 10 * 60e3));
+};
+const saveActive = (l) => store.set(ACTIVE_KEY, l);
+function addActive(o) {
+  if (!o?.id || o.offline) return;
+  saveActive([...loadActive().filter((x) => x.id !== o.id),
+    { id: o.id, code: o.code, total: o.total, items: o.items, status: 'nuevo', table_no: o.table_no, order_type: o.order_type, t: Date.now() }]);
+  dispatchEvent(new Event('active-orders'));
 }
 
 // ---------- Estado del pedido (seguimiento en vivo) ----------
@@ -359,6 +375,53 @@ function WaiterButton({ table, name }) {
       <button className="btn btn-primary btn-block sec" disabled=${!mesa.trim() || busy} onClick=${() => call(mesa.trim())}>${busy ? 'Llamando…' : '🔔 Llamar al mesero'}</button>
     <//>`}
   </span>`;
+}
+
+function OrderWatcher() {
+  const [list, setList] = useState(loadActive);
+  const [open, setOpen] = useState(() => loadActive().some((o) => !FINAL.has(o.status)));
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    let alive = true, t;
+    const tick = async () => {
+      clearTimeout(t);
+      const cur = loadActive();
+      let fail = false;
+      const next = (await Promise.all(cur.map(async (o) => {
+        if (FINAL.has(o.status)) return o;
+        try {
+          const r = await rpc('order_status', { p_id: o.id });
+          if (!r) return null; // el local lo eliminó
+          return r.status !== o.status ? { ...o, status: r.status, finalAt: FINAL.has(r.status) ? Date.now() : undefined } : o;
+        } catch { fail = true; return o; }
+      }))).filter(Boolean);
+      if (!alive) return;
+      setOffline(fail);
+      if (JSON.stringify(next) !== JSON.stringify(cur)) saveActive(next);
+      setList(next);
+      t = setTimeout(tick, fail ? 8000 : 4000);
+    };
+    const onAdd = () => { setList(loadActive()); tick(); };
+    tick();
+    addEventListener('active-orders', onAdd); addEventListener('online', tick); document.addEventListener('visibilitychange', tick);
+    return () => { alive = false; clearTimeout(t); removeEventListener('active-orders', onAdd); removeEventListener('online', tick); document.removeEventListener('visibilitychange', tick); };
+  }, []);
+  const remove = (id) => { const l = loadActive().filter((x) => x.id !== id); saveActive(l); setList(l); };
+  if (!list.length) return null;
+  const first = list.find((o) => !FINAL.has(o.status)) || list[0];
+  return html`<div className="watch">
+    <div className="quick-bar"><button onClick=${() => setOpen(true)}>🧾 Mi pedido #${first.code} · ${STATUS_SHORT[first.status] || ''}${list.length > 1 ? ` (+${list.length - 1})` : ''}</button></div>
+    ${open && html`<${Sheet} onClose=${() => setOpen(false)}>
+      <div className="row between"><h2>Mis pedidos</h2><button className="icon-btn" aria-label="Cerrar" onClick=${() => setOpen(false)}>✕</button></div>
+      ${offline && html`<div className="err" style=${{ marginBottom: 8 }}>📡 Sin conexión: te mostramos el último estado conocido. Se actualizará solo cuando vuelvas a tener internet.</div>`}
+      ${list.map((o) => html`<div className="track-card" key=${o.id} style=${{ background: 'color-mix(in srgb, var(--text) 5%, transparent)', boxShadow: 'none' }}>
+        <div className="row between"><b>Pedido #${o.code}${o.order_type === 'domicilio' ? ' · 🛵' : o.table_no ? ' · Mesa ' + o.table_no : ''}</b><b>${money(o.total)}</b></div>
+        <div className="muted" style=${{ fontSize: 13 }}>${(o.items || []).map((l) => l.qty + '× ' + lineTitle(l)).join(' · ')}</div>
+        <${StatusTrack} status=${o.status}/>
+        ${FINAL.has(o.status) && html`<button className="btn btn-ghost btn-block" style=${{ marginTop: 10 }} onClick=${() => remove(o.id)}>Quitar de mi lista</button>`}
+      </div>`)}
+    <//>`}
+  </div>`;
 }
 
 // ---------- Ticket virtual ----------
@@ -587,10 +650,9 @@ function MenuApp() {
   useTheme(menu);
   const cart = useCart();
   const [cartOpen, setCartOpen] = useState(false);
-  const [order, setOrder] = useState(() => store.get('last-order', null, sessionStorage));
+  const [order, setOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, toast] = useToast();
-  useEffect(() => { store.set('last-order', order, sessionStorage); }, [order]);
   const [cust, setCust] = useState(getCustomer);
   if (!menu) return html`<${Loader} error=${error} onRetry=${reload}/>`;
   const rest = menu.restaurants[0];
@@ -606,10 +668,10 @@ function MenuApp() {
 
   return html`<div>
     <${RestaurantView} rest=${rest} menu=${menu} cart=${cart} toast=${toast} waiter=${{ table: TABLE, name: store.get('cname', '', sessionStorage) }}/>
-    ${order && !cartOpen && html`<div className="quick-bar"><button onClick=${() => setOrder({ ...order, __open: true })}>🧾 Ver el estado de mi pedido #${order.code}</button></div>`}
     <${CartBar} lines=${cart.lines} colors=${rest.colors} onOpen=${() => setCartOpen(true)}/>
     ${cartOpen && html`<${CartSheet} cart=${cart} menu=${menu} busy=${busy} onClose=${() => setCartOpen(false)} onConfirm=${confirm}/>`}
-    ${order && order.__open !== false && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder({ ...order, __open: false })} onNew=${() => setOrder(null)}/>`}
+    ${order && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder(null)} onNew=${() => setOrder(null)}/>`}
+    <${OrderWatcher}/>
     <${Toast} msg=${msg}/>
   </div>`;
 }
@@ -943,6 +1005,7 @@ function AIApp() {
 
     ${preview && html`<${Ticket} preview busy=${busy} order=${{ items: lines, total: cartTotal(lines), table_no: TABLE, source: 'ia' }} menu=${menu}
       onClose=${() => setPreview(false)} onConfirm=${() => { setPreview(false); setCheckout(true); }}/>`}
+    <${OrderWatcher}/>
     ${checkout && html`<${AICheckout} lines=${lines} busy=${busy} onClose=${() => setCheckout(false)} onConfirm=${(ot) => finish(lines, ot)}/>`}
     ${order && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder(null)}
       onNew=${() => { setOrder(null); setLines([]); setChat([]); setHistory([]); setStarted(false); setHandsFree(true); }}/>`}
