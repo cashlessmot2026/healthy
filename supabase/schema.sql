@@ -70,8 +70,10 @@ create table if not exists public.orders (
   address text default '',
   lat double precision,
   lng double precision,
+  order_type text default 'mesa',         -- mesa | domicilio
   updated_at timestamptz default now()
 );
+alter table public.orders add column if not exists order_type text default 'mesa';
 alter table public.orders add column if not exists customer_phone text default '';
 alter table public.orders add column if not exists address text default '';
 alter table public.orders add column if not exists lat double precision;
@@ -237,12 +239,13 @@ begin
   end if;
   if jsonb_array_length(p_order->'items') > 60 then raise exception 'Pedido demasiado grande'; end if;
   c := upper(substr(translate(encode(gen_random_bytes(6), 'base64'), '+/=0O1Il', ''), 1, 4));
-  insert into orders(code, source, table_no, items, total, notes, customer_name, customer_phone, address, lat, lng)
+  insert into orders(code, source, table_no, items, total, notes, customer_name, customer_phone, address, lat, lng, order_type)
   values (c, left(coalesce(p_order->>'source','menu'), 10), left(coalesce(p_order->>'table_no',''), 20),
           p_order->'items', coalesce((p_order->>'total')::int, 0), left(coalesce(p_order->>'notes',''), 500),
           left(coalesce(p_order->>'customer_name',''), 60), left(coalesce(p_order->>'customer_phone',''), 30),
           left(coalesce(p_order->>'address',''), 250),
-          nullif(p_order->>'lat','')::double precision, nullif(p_order->>'lng','')::double precision)
+          nullif(p_order->>'lat','')::double precision, nullif(p_order->>'lng','')::double precision,
+          case when p_order->>'order_type' = 'domicilio' then 'domicilio' else 'mesa' end)
   returning * into o;
   return jsonb_build_object('id', o.id, 'code', o.code, 'created_at', o.created_at);
 end $$;

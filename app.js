@@ -114,10 +114,15 @@ function useCart() {
 }
 
 const getCustomer = () => store.get('customer', null);
-async function submitOrder({ lines, table, notes, source, customer }) {
+async function submitOrder({ lines, notes, source, customer, ot }) {
   const c = getCustomer() || {};
-  const payload = { items: lines, total: cartTotal(lines), table_no: table || '', notes: notes || '', source,
-    customer_name: customer || c.name || '', customer_phone: c.phone || '', address: c.address || '', lat: c.lat ?? null, lng: c.lng ?? null };
+  const dom = ot?.mode === 'domicilio';
+  if (ot?.mode === 'mesa' && ot.table) store.set('table', ot.table.trim(), sessionStorage);
+  if (dom) store.set('customer', { ...c, phone: ot.phone, address: ot.address, lat: ot.lat ?? null, lng: ot.lng ?? null });
+  // En mesa solo viajan la mesa y el nombre; los datos de contacto solo se envían en domicilios.
+  const payload = { items: lines, total: cartTotal(lines), notes: notes || '', source, order_type: dom ? 'domicilio' : 'mesa',
+    table_no: dom ? '' : (ot?.table || '').trim(), customer_name: customer || c.name || '',
+    customer_phone: dom ? ot.phone.trim() : '', address: dom ? ot.address.trim() : '', lat: dom ? ot.lat ?? null : null, lng: dom ? ot.lng ?? null : null };
   try {
     const r = await rpc('create_order', { p_order: payload });
     return { ...payload, ...r };
@@ -202,6 +207,43 @@ function LiveStatus({ order, onChange }) {
   return html`<div style=${{ margin: '12px 0 4px' }}><${StatusTrack} status=${status}/></div>`;
 }
 
+// ---------- ¿En mesa o a domicilio? ----------
+const phoneOk = (p) => (p || '').replace(/\D/g, '').length >= 7;
+function newOT(session) {
+  const c = getCustomer() || {};
+  const table = session?.table || TABLE || store.get('table', '', sessionStorage) || '';
+  return { mode: table ? 'mesa' : '', table, phone: c.phone || '', address: c.address || '', lat: c.lat ?? null, lng: c.lng ?? null };
+}
+const otValid = (ot) => ot.mode === 'mesa' ? !!ot.table.trim() : ot.mode === 'domicilio' ? phoneOk(ot.phone) && (!!ot.address.trim() || ot.lat != null) : false;
+function OrderTypeForm({ ot, setOt }) {
+  const [locating, setLocating] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (p) => setOt((o) => ({ ...o, ...p }));
+  const locate = () => {
+    if (!navigator.geolocation) { setErr('Tu navegador no permite obtener la ubicación. Escribe tu dirección.'); return; }
+    setLocating(true); setErr('');
+    navigator.geolocation.getCurrentPosition(
+      (p) => { set({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) }); setLocating(false); },
+      (e) => { setErr(e.code === 1 ? 'Permiso de ubicación denegado. Actívalo o escribe tu dirección.' : 'No pudimos obtener tu ubicación. Escribe tu dirección.'); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  };
+  const pick = (mode) => { set({ mode }); if (mode === 'domicilio' && ot.lat == null && !ot.address.trim()) locate(); };
+  return html`<div className="sec"><div className="sec-title">¿Dónde lo entregamos?</div>
+    <div className="opt-grid">
+      <button type="button" className=${'opt' + (ot.mode === 'mesa' ? ' on' : '')} onClick=${() => pick('mesa')}>🪑 En mesa</button>
+      <button type="button" className=${'opt' + (ot.mode === 'domicilio' ? ' on' : '')} onClick=${() => pick('domicilio')}>🛵 A domicilio</button>
+    </div>
+    ${ot.mode === 'mesa' && html`<label className="lbl" style=${{ marginTop: 12 }}>Número de mesa<input className="field" inputMode="numeric" value=${ot.table} placeholder="Ej: 7" onChange=${(e) => set({ table: e.target.value })}/></label>`}
+    ${ot.mode === 'domicilio' && html`<div style=${{ display: 'grid', gap: 10, marginTop: 12 }}>
+      <label className="lbl">Teléfono<input className="field" type="tel" inputMode="tel" value=${ot.phone} placeholder="Ej: 3001234567" onChange=${(e) => set({ phone: e.target.value })}/></label>
+      <label className="lbl">Dirección de entrega<input className="field" value=${ot.address} placeholder="Calle, número, barrio…" onChange=${(e) => set({ address: e.target.value })}/></label>
+      <button type="button" className="gps-btn" onClick=${locate} disabled=${locating}>${locating ? '📡 Buscando tu ubicación…' : ot.lat != null ? '📍 Actualizar mi ubicación' : '📍 Usar mi ubicación (GPS)'}</button>
+      ${ot.lat != null && html`<div className="gps-ok">✓ Ubicación guardada (${ot.lat}, ${ot.lng})</div>`}
+      ${err && html`<div className="err" style=${{ marginTop: 0 }}>${err}</div>`}
+    </div>`}
+  </div>`;
+}
+
 // ---------- Instalar como app ----------
 let deferredInstall = null;
 const installSubs = new Set();
@@ -245,9 +287,8 @@ function CustomerForm({ initial, showTable, table: tbl0, cta, onDone }) {
       (e) => { setLocErr(e.code === 1 ? 'Permiso de ubicación denegado. Actívalo en tu navegador o escribe tu dirección.' : 'No pudimos obtener tu ubicación. Escribe tu dirección.'); setLocating(false); },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   };
-  useEffect(() => { if (!coords) locate(); }, []);
   const phoneOk = phone.replace(/\D/g, '').length >= 7;
-  const ok = name.trim() && phoneOk && (address.trim() || coords);
+  const ok = name.trim() && phoneOk;
   const go = (e) => {
     e.preventDefault();
     const c = { name: name.trim(), phone: phone.trim(), address: address.trim(), lat: coords?.lat ?? null, lng: coords?.lng ?? null };
@@ -257,13 +298,13 @@ function CustomerForm({ initial, showTable, table: tbl0, cta, onDone }) {
   return html`<form onSubmit=${go}>
     <label className="lbl">Tu nombre<input className="field" autoComplete="name" value=${name} placeholder="Ej: Laura Gómez" onChange=${(e) => setName(e.target.value)}/></label>
     <label className="lbl">Teléfono<input className="field" type="tel" inputMode="tel" autoComplete="tel" value=${phone} placeholder="Ej: 3001234567" onChange=${(e) => setPhone(e.target.value)}/></label>
-    <label className="lbl">Dirección<input className="field" autoComplete="street-address" value=${address} placeholder="Calle, número, barrio…" onChange=${(e) => setAddress(e.target.value)}/></label>
+    <label className="lbl">Dirección (opcional, para domicilios)<input className="field" autoComplete="street-address" value=${address} placeholder="Calle, número, barrio…" onChange=${(e) => setAddress(e.target.value)}/></label>
     <button type="button" className="gps-btn" onClick=${locate} disabled=${locating}>${locating ? '📡 Buscando tu ubicación…' : coords ? '📍 Actualizar mi ubicación' : '📍 Usar mi ubicación (GPS)'}</button>
     ${coords && html`<div className="gps-ok">✓ Ubicación guardada (${coords.lat}, ${coords.lng})</div>`}
     ${locErr && html`<div className="err" style=${{ marginTop: 0 }}>${locErr}</div>`}
     ${showTable && html`<label className="lbl">Número de mesa (opcional)<input className="field" inputMode="numeric" value=${table} placeholder="Ej: 7" onChange=${(e) => setTable(e.target.value)}/></label>`}
     <button className="btn btn-primary btn-block" disabled=${!ok}>${cta || 'Continuar →'}</button>
-    ${!ok && html`<p className="hint">Falta tu nombre, un teléfono válido y tu dirección o ubicación.</p>`}
+    ${!ok && html`<p className="hint">Falta tu nombre y un teléfono válido.</p>`}
   </form>`;
 }
 function CustomerGate({ rest, intro, ...p }) {
@@ -339,7 +380,7 @@ function Ticket({ order, menu, preview, onClose, onConfirm, onNew, busy, live = 
         ${!preview && live && order.id && html`<${LiveStatus} order=${order}/>`}
         <div className="t-foot">
           ${date.toLocaleDateString('es-CO')} · ${date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-          ${order.table_no ? html` · <b>Mesa ${order.table_no}</b>` : ''}
+          ${order.order_type === 'domicilio' ? html` · <b>🛵 Domicilio</b>` : order.table_no ? html` · <b>Mesa ${order.table_no}</b>` : ''}
           ${order.customer_name ? html` · ${order.customer_name}` : ''}
           ${order.source === 'ia' ? ' · Mesero IA' : ''}
         </div>
@@ -440,7 +481,7 @@ function ProductModal({ product, menu, onClose, onAdd }) {
 }
 
 function CartSheet({ cart, menu, onClose, onConfirm, busy, session }) {
-  const [table, setTable] = useState(session?.table || TABLE || store.get('table', '', sessionStorage));
+  const [ot, setOt] = useState(() => newOT(session));
   const [customer, setCustomer] = useState(session?.name || getCustomer()?.name || store.get('cname', '', sessionStorage));
   const [notes, setNotes] = useState('');
   const R = byId(menu.restaurants);
@@ -470,15 +511,14 @@ function CartSheet({ cart, menu, onClose, onConfirm, busy, session }) {
         <div className="row between" style=${{ marginTop: 6 }}><span className="price" style=${{ fontSize: 14 }}>${money(d.price)}</span><b>＋</b></div>
       <//>`)}</div></div>`}
 
+    <${OrderTypeForm} ot=${ot} setOt=${setOt}/>
     <div className="sec grid2">
-      <label className="lbl">Número de mesa<input className="field" inputMode="numeric" value=${table} placeholder="Ej: 7"
-        onChange=${(e) => { setTable(e.target.value); store.set('table', e.target.value, sessionStorage); }}/></label>
       ${!session && html`<label className="lbl">Tu nombre<input className="field" value=${customer} placeholder="Opcional" onChange=${(e) => { setCustomer(e.target.value); store.set('cname', e.target.value, sessionStorage); }}/></label>`}
       <label className="lbl" style=${session ? null : { gridColumn: '1/-1' }}>Comentario general<input className="field" value=${notes} placeholder="Opcional" onChange=${(e) => setNotes(e.target.value)}/></label>
     </div>
     <div className="row between sec" style=${{ fontSize: 20, fontWeight: 800 }}><span>Total</span><span>${money(total)}</span></div>
-    <button className="btn btn-primary btn-block sec" disabled=${!cart.lines.length || busy} onClick=${() => onConfirm({ table, notes, customer })}>
-      ${busy ? 'Enviando…' : 'Confirmar y enviar pedido'}</button>
+    <button className="btn btn-primary btn-block sec" disabled=${!cart.lines.length || busy || !otValid(ot)} onClick=${() => onConfirm({ ot, notes, customer })}>
+      ${busy ? 'Enviando…' : !ot.mode ? 'Elige mesa o domicilio' : !otValid(ot) ? (ot.mode === 'mesa' ? 'Indica tu número de mesa' : 'Completa teléfono y dirección') : 'Confirmar y enviar pedido'}</button>
   <//>`;
 }
 
@@ -558,9 +598,9 @@ function MenuApp() {
 
   if (!cust) return html`<${CustomerGate} rest=${rest} intro="Antes de ver la carta, cuéntanos quién eres para atenderte mejor." cta="Ver la carta →" onDone=${(c) => setCust(c)}/>`;
 
-  const confirm = async ({ table, notes, customer }) => {
+  const confirm = async ({ ot, notes, customer }) => {
     setBusy(true);
-    const o = await submitOrder({ lines: cart.lines, table, notes, source: 'menu', customer });
+    const o = await submitOrder({ lines: cart.lines, ot, notes, source: 'menu', customer });
     setBusy(false); setCartOpen(false); setOrder(o); cart.clear();
   };
 
@@ -632,12 +672,12 @@ function QuickApp() {
     intro="Dinos quién eres y pide en segundos. Verás el estado de tu pedido aquí mismo." cta="Ver la carta →"
     onDone=${(c, table) => { keep({ name: c.name, table, orders: [], started: Date.now() }); setView('menu'); }}/>`;
 
-  const confirm = async ({ table, notes }) => {
+  const confirm = async ({ ot, notes }) => {
     setBusy(true);
-    const o = await submitOrder({ lines: cart.lines, table, notes, source: 'rapido', customer: sess.name });
+    const o = await submitOrder({ lines: cart.lines, ot, notes, source: 'rapido', customer: sess.name });
     setBusy(false);
     if (o.offline) { toast('No pudimos enviar el pedido. Revisa tu conexión e intenta de nuevo.'); return; }
-    keep({ ...sess, table: table || sess.table, orders: [...sess.orders, { id: o.id, code: o.code, total: o.total, items: o.items, status: 'nuevo', created_at: o.created_at }] });
+    keep({ ...sess, table: ot.mode === 'mesa' ? ot.table.trim() : sess.table, orders: [...sess.orders, { id: o.id, code: o.code, total: o.total, items: o.items, status: 'nuevo', created_at: o.created_at }] });
     cart.clear(); setCartOpen(false); setView('track');
   };
 
@@ -751,6 +791,17 @@ function aiCartToLines(cart, menu) {
   });
 }
 
+function AICheckout({ lines, busy, onClose, onConfirm }) {
+  const [ot, setOt] = useState(() => newOT(null));
+  return html`<${Sheet} onClose=${onClose}>
+    <div className="row between"><h2>Último paso</h2><button className="icon-btn" aria-label="Cerrar" onClick=${onClose}>✕</button></div>
+    <div className="row between sec" style=${{ fontSize: 20, fontWeight: 800 }}><span>Total</span><span>${money(cartTotal(lines))}</span></div>
+    <${OrderTypeForm} ot=${ot} setOt=${setOt}/>
+    <button className="btn btn-primary btn-block sec" disabled=${busy || !otValid(ot)} onClick=${() => onConfirm(ot)}>
+      ${busy ? 'Enviando…' : !ot.mode ? 'Elige mesa o domicilio' : !otValid(ot) ? (ot.mode === 'mesa' ? 'Indica tu número de mesa' : 'Completa teléfono y dirección') : 'Enviar pedido'}</button>
+  <//>`;
+}
+
 function AIApp() {
   const { menu: raw, error, reload } = useMenu();
   const menu = useMemo(() => publicMenu(raw), [raw]);
@@ -767,6 +818,7 @@ function AIApp() {
   const [thinking, setThinking] = useState(false);
   const [order, setOrder] = useState(null);
   const [preview, setPreview] = useState(false);
+  const [checkout, setCheckout] = useState(false);
   const [busy, setBusy] = useState(false);
   const [handsFree, setHandsFree] = useState(true); // micrófono siempre abierto
   const [typing, setTyping] = useState(false);      // mientras escribe, el micrófono solo se pausa
@@ -777,7 +829,7 @@ function AIApp() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chat, thinking]);
   useEffect(() => { store.set('voice', voiceOn); }, [voiceOn]);
   // Bucle manos libres: el micrófono se reabre solo mientras no esté hablando Leo, pensando o mostrando el ticket.
-  const micOpen = started && handsFree && !typing && voice.canListen && !voice.micError && !voice.speaking && !thinking && !order && !preview && !busy;
+  const micOpen = started && handsFree && !typing && voice.canListen && !voice.micError && !voice.speaking && !thinking && !order && !preview && !checkout && !busy;
   useEffect(() => {
     if (!micOpen) { voice.stopListening(); return; }
     const t = setTimeout(() => voice.startListening((txt) => sendRef.current(txt)), 300);
@@ -796,10 +848,10 @@ function AIApp() {
     if (voiceOn) voice.speak(greeting);
   };
 
-  const finish = async (ls) => {
+  const finish = async (ls, ot) => {
     setBusy(true);
-    const o = await submitOrder({ lines: ls, table: TABLE, notes: '', source: 'ia', customer: store.get('cname', '', sessionStorage) });
-    setBusy(false); setPreview(false); setOrder(o);
+    const o = await submitOrder({ lines: ls, ot, notes: '', source: 'ia', customer: cust?.name });
+    setBusy(false); setPreview(false); setCheckout(false); setOrder(o);
   };
 
   const ask = async (h) => {
@@ -826,7 +878,7 @@ function AIApp() {
       setChat((c) => [...c, { role: 'model', text: reply, sugs }]);
       setLines(newLines);
       if (voiceOn) voice.speak(reply);
-      if (res.stage === 'confirmado' && newLines.length) setTimeout(() => finish(newLines), 900);
+      if (res.stage === 'confirmado' && newLines.length) setTimeout(() => { setPreview(false); setCheckout(true); }, 900);
     } catch (e) {
       setHistory(history);
       setChat((c) => [...c, { role: 'model', text: '😕 Se me fue la señal un momento. ¿Me repites lo último, por favor?' }]);
@@ -890,7 +942,8 @@ function AIApp() {
     </form>
 
     ${preview && html`<${Ticket} preview busy=${busy} order=${{ items: lines, total: cartTotal(lines), table_no: TABLE, source: 'ia' }} menu=${menu}
-      onClose=${() => setPreview(false)} onConfirm=${() => finish(lines)}/>`}
+      onClose=${() => setPreview(false)} onConfirm=${() => { setPreview(false); setCheckout(true); }}/>`}
+    ${checkout && html`<${AICheckout} lines=${lines} busy=${busy} onClose=${() => setCheckout(false)} onConfirm=${(ot) => finish(lines, ot)}/>`}
     ${order && html`<${Ticket} order=${order} menu=${menu} onClose=${() => setOrder(null)}
       onNew=${() => { setOrder(null); setLines([]); setChat([]); setHistory([]); setStarted(false); setHandsFree(true); }}/>`}
   </div>`;
@@ -1164,7 +1217,7 @@ function AdminOrders({ token, menu, toast, onLogout }) {
     <div className="panel">${orders.length === 0 && html`<p className="muted">Todavía no hay pedidos.</p>`}
       ${orders.map((o) => html`<div className="a-row" key=${o.id} style=${{ flexWrap: 'wrap' }}>
         <button className="grow" style=${{ textAlign: 'left' }} onClick=${() => setView(o)}>
-          <b>#${o.code}</b> ${o.customer_name && html`· ${o.customer_name}`}${o.customer_phone && html` · 📞 ${o.customer_phone}`} ${o.table_no && html`· Mesa ${o.table_no}`} · ${money(o.total)} ${o.source === 'ia' ? '· 🤖' : o.source === 'rapido' ? '· ⚡' : ''}
+          <b>#${o.code}</b> ${o.customer_name && html`· ${o.customer_name}`}${o.customer_phone && html` · 📞 ${o.customer_phone}`} ${o.order_type === 'domicilio' ? html`· 🛵 Domicilio` : o.table_no && html`· Mesa ${o.table_no}`} · ${money(o.total)} ${o.source === 'ia' ? '· 🤖' : o.source === 'rapido' ? '· ⚡' : ''}
           <div className="muted" style=${{ fontSize: 13 }}>${o.address ? '📍 ' + o.address + (o.lat != null ? ` (${o.lat}, ${o.lng})` : '') + ' · ' : o.lat != null ? `📍 ${o.lat}, ${o.lng} · ` : ''}${new Date(o.created_at).toLocaleString('es-CO')} · ${(o.items || []).map((l) => l.qty + '× ' + lineTitle(l)).join(', ')}</div></button>
         <span className=${'status st-' + o.status}>${o.status}</span>
         <select className="field" style=${{ width: 140, padding: '8px 10px' }} value=${o.status} onChange=${(e) => setStatus(o, e.target.value)}>
